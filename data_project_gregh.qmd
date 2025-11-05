@@ -1,0 +1,302 @@
+---
+title: "Hue-mans and Color: What We Say When We’re Not Sure"
+format: html
+author: "Greg Hernandez" 
+date: "24 September, 2025"
+embed-resources: true
+---
+
+## Introduction
+
+```{r}
+#| label: setup
+#| warning: false
+
+
+library(tidyverse)
+library(gt)
+library(readxl)
+color_survey <- read_csv("color_survey.csv")
+
+```
+
+For this project I will be looking at responses that are trying to be more precise but can't find the exact color. By this I mean responses about colors that have an **"ish"** in them or responses like **"Bluish Green"** or **"Brownish red"**. 
+
+## Cleaning and `NA`'s
+
+I will start by looking at the `NA`'s in this data set and decide what to do with them. 
+
+```{r}
+#| label: counts of na's
+color_survey |> 
+  summarise_all(~ sum(is.na(.))) |>
+  glimpse()
+```
+
+Here we can see that the only columns with `NA`'s are the `response`, `y_chromosome`, and the `colorblind` columns.  
+
+```{r}
+#| label: glimpse into just the na's
+na_color <- color_survey |>  
+  filter(if_any(everything(), is.na))
+  
+glimpse(na_color)
+```
+
+I am suspecting that people who are inputting more than 1 response are contributing at least to some of the `NA`'s. 
+
+```{r}
+#| label: look at top user id's with na's 
+#| fig-alt: This is a table showing the top 10 user_id's who have the most NA's and their counts. 
+na_color |> 
+  group_by(user_id) |> 
+  summarise(resp_w_na = n()) |> 
+  arrange(desc(resp_w_na)) |> 
+  slice_max(resp_w_na, n = 10) |>
+  gt() |>
+  tab_header(title = "Top 5 Users with Most Missing Responses") |>
+  cols_label( user_id = "User ID",
+    resp_w_na = "# of NA Responses")
+```
+
+It looks like the top users do have more `NA`'s
+
+```{r}
+#| label: na plot
+#| fig-alt: This is a plot showing how many observations NA's each user ID has if they have any.  
+
+na_counts <- na_color |> 
+  count(user_id, name = "resp_w_na")
+
+na_counts |> 
+  arrange(resp_w_na) |> 
+  mutate(index = row_number()) |> 
+  ggplot(aes(x = index, 
+             y = resp_w_na)) +
+  geom_ribbon(aes(ymin = 0, 
+                  ymax = resp_w_na), 
+              fill = "skyblue") +
+  geom_line(color = "#D55E00") +
+  labs(x = "User_ID",
+    y = "# of NA Responses",
+    title = "Number of Times People got Lazy") +
+  theme_minimal()
+```
+
+I can confirm that from this plot, a lot of the `NA`'s come from top users which leads me to believe that they aren't necessarily spam responses but they just got tired of filling in the same fields and chose not to re-enter their information for every color. 
+
+```{r}
+#| label: cleaning
+color_survey_clean <- color_survey |> 
+  group_by(user_id) |> 
+  fill(y_chromosome, colorblind, .direction = "downup") |> 
+  ungroup() |> 
+  filter(!is.na(response))
+```
+
+I learned about the fill command where if some `user_id` put their information from before but got lazy and stopped inputting it, then their initial input for `y_chromosome` and `colorblind` would be transferred for the other observations. If they never put that information in the first place I will leave it in until I see a need to change that. But there are some observations where the `response`has an `NA` so I am dropping those columns since they don't hold needed information.
+
+## First Explorations
+
+```{r}
+#| label: extract ish colors
+
+ish_colors <- color_survey_clean |>
+  filter(str_detect(response, "ish")) |>
+  mutate(ish_words = str_extract_all(response, 
+                                     regex("\\b\\w+ish\\b", 
+                                           ignore_case = TRUE))) |> 
+  unnest(ish_words)
+```
+
+
+```{r }
+#| label:  clean-base-colors
+
+ish_colors <- ish_colors |>
+mutate(base_color = str_remove(ish_words, 
+                               regex("ish$", 
+                                     ignore_case = TRUE)) |> str_to_lower(),
+       base_color = case_when(base_color %in% c("red", 
+                                                "redd") ~ "red",
+                              base_color %in% c("gray", 
+                                                "grey") ~ "grey",
+                              base_color %in% c("blue", 
+                                                "blu") ~ "blue",
+                              base_color %in% c("purple", 
+                                                "purpl") ~ "purple",
+                              base_color %in% c("orange", 
+                                                "orang") ~ "orange",
+                              base_color %in% c("green", 
+                                                "gren") ~ "green",
+                              base_color %in% c("tan", 
+                                                "tann") ~ "tan",
+                              base_color %in% c("white", 
+                                                "whit") ~ "white",
+TRUE ~ base_color))
+```
+
+I am looking for words with *ish* in the response, then adding a new column with just that response. Then I learned about `unnest` because I was running into trouble with a response like `bluish greenish`.
+
+```{r}
+#| label: count of ish colors
+
+ish_colors |>
+  count(base_color) |>
+  slice_max(n, 
+            n = 10) |>
+  ggplot(aes(x = reorder(base_color, 
+                         n), y = n)) +
+  geom_col(fill = "#66A61E") +
+  coord_flip() +
+  labs(x = "Base Color", 
+       y = "Count", 
+       title = "Top 10 Base Colors Modified with '-ish'") +
+    scale_x_discrete(labels = c("blue" = "Blue",
+    "red" = "Red",
+    "grey" = "Grey",
+    "green" = "Green",
+    "purple" = "Purple",
+    "orange" = "Orange",
+    "yellow" = "Yellow",
+    "tan" = "Tan", 
+    "pink" = "Pink", 
+    "gold" = "Gold", 
+    "silver" = "Silver", 
+    "black" = "Black")) + 
+  theme_minimal()
+```
+
+This chart shows how often each color had "ish". We can see that the most popular color to be used was `Green`, `Blue`, `Grey`, and `Red`. It is interesting to note that the RGB colors are in the top few colors that are used with "ish". This could be because they are more common colors that people base other colors off of. 
+
+## Color Distance Analysis
+
+
+```{r}
+#| label: color-distance-functions
+reference_hex <- c(blue = "#0000FF", 
+                   pink = "#FFC0CB", 
+                   purple = "#800080", 
+                   red = "#FF0000",
+                   green = "#008000", 
+                   gray = "#808080", 
+                   silver = "#C0C0C0", 
+                   yellow = "#FFFF00",
+                   orange = "#FFA500", 
+                   gold = "#FFD700", 
+                   black = "#000000")
+
+
+hex_to_rgb <- function(hex) {
+rgb <- col2rgb(hex)
+as.numeric(rgb)
+}
+
+
+color_distance <- function(hex1, hex2) {
+rgb1 <- hex_to_rgb(hex1)
+rgb2 <- hex_to_rgb(hex2)
+sqrt(sum((rgb1 - rgb2)^2))
+}
+```
+
+Here I went to w3schools where I looked at the hexadecimal for colors that look the same across all webpages ^[1: "HTML Color Names." W3Schools, https://www.w3schools.com/colors/colors_names.asp
+. Accessed 22 Oct. 2025."]. I used their definition for the common ish colors like `green`, `blue`, and `pink` were very common. So I went and got those hexadecimal codes, and  made my own data frame, `reference_hex` to compare against later. 
+
+I had to look online how to find the differences, I found a method using Euclidean distance for RGB colors ^[2: "Iyer, Luc. "Euclidian Distance in RGB Color Space." Observable, 6 Feb. 2020, https://observablehq.com/@luciyer/euclidian-distance-in-rgb-color-space
+. Accessed 22 Oct. 2025."]. 
+
+```{r}
+#| label: compute-color-distances 
+
+ish_colors <- ish_colors |>
+  filter(base_color %in% names(reference_hex)) |>
+  mutate(ref_hex = reference_hex[base_color],
+         color_dist = map2_dbl(color, 
+                      ref_hex, ~ color_distance(.x, .y)))
+```
+
+
+```{r}
+#| label: plot-color-distances
+#| fig-alt: This is a horizontal bar chart showing the median distance the responses were from the true reference colors.
+
+
+median_distances <- ish_colors |>
+  group_by(base_color) |>
+  summarise(median_distance = median(color_dist)) |>
+  arrange(desc(median_distance))
+
+
+median_distances |>
+  ggplot(aes(x = reorder(base_color, 
+                         median_distance), 
+             y = median_distance)) +
+  geom_col(fill = "#66A61E") +
+  coord_flip() +
+  labs(x = "Base Color", 
+       y = "Median Distance from Reference Color",
+       title = "How far '-ish' Colors are from Their Reference") +
+  scale_x_discrete(labels = c("blue" = "Blue",
+    "red" = "Red",
+    "gray" = "Grey",
+    "green" = "Green",
+    "purple" = "Purple",
+    "orange" = "Orange",
+    "yellow" = "Yellow",
+    "tan" = "Tan", 
+    "pink" = "Pink", 
+    "gold" = "Gold", 
+    "silver" = "Silver", 
+    "black" = "Black")) + 
+  theme_minimal()
+```
+
+One thing that is noteworthy from this graph is how earlier we had `Blue`, `Green`, `Grey` and `Red`near the top for the counts graph. But now, `Red`, `Green`, and `Blue` are still near the top for the median which means they are still far away from their values. But interestingly enough `Grey` moved down in the graph which means that people are more accurate when saying something is `greyish`. I think we see the difference in these two graphs due to the commonality of the colors. `Red`, `Green`, and `Blue`. These colors help to make other colors, and can therefore be easier to confuse for other colors. This is the whole point of people using "ish", it is to help people describe a color they don't know the exact name for. So it makes sense for the common colors that make other colors to be used the most and why `Grey` is lower on the graph because it is harder to confuse for another color.
+
+
+```{r}
+#| label: colorblind-median-distances
+#| fig-alt: This is a vertical bar chart that compares the median distance from the reference colors between colorblind and non-colorblind responses.
+#| warning: FALSE
+
+colorblind_comparison <- ish_colors |>
+  filter(!is.na(colorblind)) |>
+  group_by(base_color, 
+           colorblind) |>
+  summarise(median_distance = median(color_dist))
+
+
+
+ggplot(colorblind_comparison, aes(x = reorder(base_color, 
+                                              median_distance),
+                                  y = median_distance,
+                                  fill = as.factor(colorblind))) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  labs(x = "Base Color",
+       y = "Median Distance from Reference Color",
+       title = "Color Accuracy: Colorblind vs. Non-Colorblind",
+       fill = "Colorblind?") +
+  scale_fill_manual(values = c("0" = "#1B9E77", "1" = "#E6AB02"),
+                    labels = c("No", "Yes")) +
+  scale_x_discrete(labels = c("blue" = "Blue",
+    "red" = "Red",
+    "gray" = "Grey",
+    "green" = "Green",
+    "purple" = "Purple",
+    "orange" = "Orange",
+    "yellow" = "Yellow",
+    "tan" = "Tan", 
+    "pink" = "Pink", 
+    "gold" = "Gold", 
+    "silver" = "Silver", 
+    "black" = "Black")) +
+  theme_minimal()
+```
+
+
+This graph shows that the median of colorblind people tend to use "ish" more for 7 out of the 11 colors. I think this lends to the fact that as a colorblind person, you know that you see color differently so this may lend to a sort of lack of confidence when stating what a certain color is, hence using "ish" in these responses.
+
+
+
